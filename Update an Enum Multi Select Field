@@ -1,0 +1,77 @@
+
+**const SOURCE_CUSTOM_FIELD_GID = '[[insert source field here]]'; // Shop Name
+**const TARGET_ENUM_FIELD_GID = '[[insert target field here]]';   // VS Shops Field
+
+async function run() {
+  log("task gid" + task_gid)
+  const taskGID = task_gid;
+
+  // Step 1: Fetch task details
+  // const taskRes = await fetch(`https://app.asana.com/api/1.0/tasks/${taskGID}?opt_fields=custom_fields`);
+  const taskData = await tasksApiInstance.getTask(task_gid, { opt_fields: 'custom_fields' });
+  if(taskData){
+    log("fetching task details was successfull" + taskData.data.gid)
+  }else{
+    log("fetching task details failed" + Json.stringify(taskData))
+    return;
+  }
+  
+  const customFields = taskData.data.custom_fields;
+  if (!customFields) throw new Error('Task has no custom fields');
+  const sourceField = customFields.find(f => f.gid === SOURCE_CUSTOM_FIELD_GID);
+  if (!sourceField) throw new Error(`Source field GID ${SOURCE_CUSTOM_FIELD_GID} not found on task`);
+  const sourceValue = sourceField.text_value;
+  if (!sourceValue) throw new Error('Shop Name field is empty on the task');
+
+  // Step 2: Get enum options for target field
+  const enumData = await customFieldsApiInstance.getCustomField(TARGET_ENUM_FIELD_GID ,{opt_fields:'enum_options'});
+  if(enumData){
+    log("fetching task details was successfull" + enumData.data.gid)
+  }else{
+    log("fetching task details failed" + Json.stringify(enumData))
+    return;
+  }
+
+  let enumOptions = enumData.data.enum_options;
+  if (!Array.isArray(enumOptions)) throw new Error('Enum options not returned correctly');
+
+  // Step 3: Create option if not found
+  let option = enumOptions.find(opt => opt.name === sourceValue);
+  if (!option) {
+    log("creating enum " + sourceValue)
+    const createData = await customFieldsApiInstance.createEnumOptionForCustomField( TARGET_ENUM_FIELD_GID, {
+      body: { data: { name: sourceValue }}
+    });
+    
+    if (!createData) {
+        log("Creating enum value failed");
+        return;
+    }else{
+      log("created enum option")
+    }
+    option = createData.data;
+  }
+
+  // Step 4: Update task with new enum value
+  const targetField = customFields.find(f => f.gid === TARGET_ENUM_FIELD_GID);
+  const currentValues = targetField?.multi_enum_values?.map(v => v.gid) || [];
+  const updatedValues = currentValues.includes(option.gid)
+    ? currentValues
+    : [...currentValues, option.gid];
+
+  const updateData = await tasksApiInstance.updateTask({
+    data: {
+        custom_fields: {
+          [TARGET_ENUM_FIELD_GID]: updatedValues
+        }
+      }
+  }, task_gid);
+
+  log("updated task" )
+  if (!updateData) log("Updating task failed");
+
+  // Force a log so we see success too
+  log(`✅ Successfully added "${sourceValue}" to VS Shops Field`);
+}
+
+run()
